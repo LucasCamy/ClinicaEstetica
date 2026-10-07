@@ -11,7 +11,7 @@ RUN dotnet restore ./src/WebAPI/WebAPI.csproj --configfile nuget.config
 COPY src/ ./src/
 RUN dotnet publish ./src/WebAPI/WebAPI.csproj -c Release --no-restore -o /app/publish
 
-FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS final
+FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS final
 WORKDIR /app
 COPY --from=build /app/publish .
 
