@@ -1,0 +1,122 @@
+name: painelestetica
+
+services:
+  postgres:
+    image: postgres:16.9-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-estetica_db}
+      POSTGRES_USER: ${POSTGRES_USER:-estetica_app}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Defina POSTGRES_PASSWORD no arquivo .env}
+    expose:
+      - "5432"
+    ports:
+      # Administração local apenas. Nunca abra esta porta no roteador ou no Tunnel.
+      - "${POSTGRES_BIND_ADDRESS:-127.0.0.1}:${POSTGRES_PORT:-32152}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - internal
+      # Necessária para que o Docker publique a porta somente em 127.0.0.1.
+      - host_access
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: painelestetica-backend:local
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      ASPNETCORE_URLS: http://+:5000
+      # O backend único executa migrations antes de aceitar tráfego. A segunda
+      # opção impede habilitação acidental em produção fora deste deploy.
+      Database__ApplyMigrations: ${DATABASE_APPLY_MIGRATIONS:-true}
+      Database__AllowProductionMigrations: ${DATABASE_ALLOW_PRODUCTION_MIGRATIONS:-true}
+      ConnectionStrings__DefaultConnection: Host=postgres;Port=5432;Database=${POSTGRES_DB:-estetica_db};Username=${POSTGRES_USER:-estetica_app};Password=${POSTGRES_PASSWORD}
+      BootstrapAdmin__Username: ${ADMIN_BOOTSTRAP_USERNAME:-}
+      BootstrapAdmin__Email: ${ADMIN_BOOTSTRAP_EMAIL:-}
+      BootstrapAdmin__Password: ${ADMIN_BOOTSTRAP_PASSWORD:-}
+      FileStorage__BasePath: /app/storage
+      FileStorage__MaxClientBytes: ${FILE_STORAGE_MAX_CLIENT_BYTES:-524288000}
+      FileStorage__MaxInstallationBytes: ${FILE_STORAGE_MAX_INSTALLATION_BYTES:-21474836480}
+      Pdf__QuestPdfLicense: ${PDF_QUESTPDF_LICENSE:-Community}
+      DataProtection__KeysPath: /app/data-protection-keys
+      Clinic__TimeZoneId: ${CLINIC_TIME_ZONE:-America/Cuiaba}
+      Security__AllowInsecureHttpCookies: ${ALLOW_INSECURE_HTTP_COOKIES:-false}
+      Cors__AllowedOrigins__0: ${CORS_ALLOWED_ORIGIN:-https://leilainearakaki.cloudlane.com.br}
+      AllowedHosts: ${ALLOWED_HOSTS:-leilainearakaki.cloudlane.com.br;localhost;127.0.0.1}
+      GoogleCalendar__ClientId: ${GOOGLE_CALENDAR_CLIENT_ID:-}
+      GoogleCalendar__ClientSecret: ${GOOGLE_CALENDAR_CLIENT_SECRET:-}
+      GoogleCalendar__RedirectUri: ${GOOGLE_CALENDAR_REDIRECT_URI:-https://leilainearakaki.cloudlane.com.br/api/integrations/google-calendar/callback}
+    expose:
+      - "5000"
+    ports:
+      # Mantido em loopback para diagnóstico local; a landing acessa a API via Nginx.
+      - "${BACKEND_BIND_ADDRESS:-127.0.0.1}:${BACKEND_PORT:-32151}:5000"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:5000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      # Arquivos clínicos persistem no disco do host, fora da área interna do Docker.
+      # Altere apenas CLINICAL_STORAGE_HOST_PATH no .env de produção quando necessário.
+      - type: bind
+        source: ${CLINICAL_STORAGE_HOST_PATH:?Defina CLINICAL_STORAGE_HOST_PATH no arquivo .env}
+        target: /app/storage
+      - data_protection_keys:/app/data-protection-keys
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - internal
+      # Necessária para que o Docker publique a porta somente em 127.0.0.1.
+      - host_access
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_CLINIC_TIME_ZONE: ${CLINIC_TIME_ZONE:-America/Cuiaba}
+    ports:
+      - "${FRONTEND_BIND_ADDRESS:-127.0.0.1}:${FRONTEND_PORT:-32150}:8080"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--spider", "http://127.0.0.1:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - edge
+      - internal
+
+networks:
+  edge:
+  internal:
+    internal: true
+  # Não recebe tráfego externo: as portas continuam vinculadas a 127.0.0.1.
+  # Permite apenas o encaminhamento local solicitado para API e PostgreSQL.
+  host_access:
+
+volumes:
+  postgres_data:
+  data_protection_keys:

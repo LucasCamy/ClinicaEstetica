@@ -1,0 +1,23 @@
+using Microsoft.AspNetCore.Antiforgery;
+
+namespace PainelEstetica.WebAPI.Endpoints;
+
+public sealed class AntiforgeryFilter(IAntiforgery antiforgery) : IEndpointFilter
+{
+    public async ValueTask<object?> InvokeAsync(EndpointFilterInvocationContext context, EndpointFilterDelegate next)
+    {
+        try
+        {
+            await antiforgery.ValidateRequestAsync(context.HttpContext);
+        }
+        catch (AntiforgeryValidationException)
+        {
+            return Results.Problem(
+                statusCode: StatusCodes.Status400BadRequest,
+                title: "Token antiforgery inválido",
+                detail: "Atualize a página e tente novamente.");
+        }
+
+        return await next(context);
+    }
+}
